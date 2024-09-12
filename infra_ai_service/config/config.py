@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     REPAIR_PRO_AI_MODEL: str = ''
     OPENAI_API_KEY: str  # must be assigned in .env
     OPENAI_BASE_URL: str = ''
+    SRC_RPM_DIR: str = '/tmp/infra_ai_service/'
+    XML_EXTRACT_PATH: str = ''
 
     @property
     def BASE_URL(self) -> str:
@@ -29,6 +31,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = f"{BASE_DIR}/.env"
         env_file_encoding = "utf-8"
+
         fields = {
             "_BASE_URL": {
                 "env": "BASE_URL",
@@ -53,7 +56,13 @@ class Settings(BaseSettings):
             },
             'OPENAI_BASE_URL': {
                 'env': 'OPENAI_BASE_URL'
-            }
+            },
+            'SRC_RPM_DIR': {
+                'env': 'SRC_RPM_DIR'
+            },
+            'XML_EXTRACT_PATH': {
+                'env': 'XML_EXTRACT_PATH'
+            },
         }
 
 
