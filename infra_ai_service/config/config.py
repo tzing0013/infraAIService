@@ -1,5 +1,4 @@
 from pathlib import Path
-from sys import modules
 
 from pydantic import BaseSettings
 
@@ -10,18 +9,22 @@ class Settings(BaseSettings):
     """Application settings."""
 
     ENV: str = "dev"
-    HOST: str = "0.0.0.0"
+    HOST: str = 'localhost'
     PORT: int = 8000
-    _BASE_URL: str = f"https://{HOST}:{PORT}"
     # quantity of workers for uvicorn
     WORKERS_COUNT: int = 1
     # Enable uvicorn reloading
     RELOAD: bool = False
 
+    # SpecBot config
+    SPECBOT_AI_MODEL: str = ''
+    REPAIR_PRO_AI_MODEL: str = ''
+    OPENAI_API_KEY: str  # must be assigned in .env
+    OPENAI_BASE_URL: str = ''
+
     @property
     def BASE_URL(self) -> str:
-        return self._BASE_URL if self._BASE_URL.endswith(
-            "/") else f"{self._BASE_URL}/"
+        return f"https://{self.HOST}:{self.PORT}/"
 
     class Config:
         env_file = f"{BASE_DIR}/.env"
@@ -33,6 +36,24 @@ class Settings(BaseSettings):
             "_DB_BASE": {
                 "env": "DB_BASE",
             },
+            'HOST': {
+                'env': 'HOST',
+            },
+            'PORT': {
+                'env': 'PORT',
+            },
+            'SPECBOT_AI_MODEL': {
+                'env': 'SPECBOT_AI_MODEL'
+            },
+            'REPAIR_PRO_AI_MODEL': {
+                'env': 'REPAIR_PRO_AI_MODEL'
+            },
+            'OPENAI_API_KEY': {
+                'env': 'OPENAI_API_KEY'
+            },
+            'OPENAI_BASE_URL': {
+                'env': 'OPENAI_BASE_URL'
+            }
         }
 
 

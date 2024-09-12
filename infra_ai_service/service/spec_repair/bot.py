@@ -1,8 +1,11 @@
-import os
+#!/usr/bin/python3
+
 import re
 import json
+from copy import deepcopy
 from openai import OpenAI
-from .utils import (
+from infra_ai_service.config.config import settings
+from infra_ai_service.service.spec_repair.utils import (
     gen_func_description,
     repair_spec,
     repair_spec_pro,
@@ -11,7 +14,9 @@ from .utils import (
     save_log,
 )
 
-SYSTEM_PROMPT = "你是一位经验丰富RPM软件包构建人员，你的任务是根据提供的spec脚本和报错日志修复spec脚本，以解决构建过程中出现的问题。"
+SYSTEM_PROMPT = ("你是一位经验丰富RPM软件包构建人员，"
+                 "你的任务是根据提供的spec脚本和报错日志修复spec脚本，"
+                 "以解决构建过程中出现的问题。")
 
 PROMPT_TEMPLATE = """
 spec脚本：
@@ -68,14 +73,28 @@ spec脚本：
 
 class SpecBot:
     def __init__(self):
-        api_key = os.getenv("OPENAI_API_KEY", None)
-        base_url = os.getenv("OPENAI_BASE_URL", None)
+        api_key = settings.OPENAI_API_KEY
+        base_url = settings.OPENAI_BASE_URL
         self.client = OpenAI(api_key=api_key, base_url=base_url)
-        self.model = "gpt-4-0613"
+        self.model = settings.SPECBOT_AI_MODEL
 
-    def repair(self, input_spec, input_log, output_spec, output_log):
-        spec = self._preprocess_spec(input_spec)
-        log = self._preprocess_log(input_log)
+    def repair(self, spec_lines: list, log_lines: list):
+        '''
+        repair spec file content
+
+        :param spec_lines: content of error spec file
+        :type list
+
+        :param log_lines: content of error log
+        :type list
+
+        :return
+        :type tuple(str, bool, list(str), str)
+
+        '''
+        spec = self._preprocess_spec(deepcopy(spec_lines))
+        log = self._preprocess_log(log_lines)
+
         tools = self._prepare_tools()
         messages = self._prepare_messages(spec, log)
         fault_segment = None
@@ -87,7 +106,10 @@ class SpecBot:
                 model=self.model,
                 messages=messages,
                 tools=tools,
-                tool_choice={"type": "function", "function": {"name": "repair_spec"}},
+                tool_choice={
+                    "type": "function",
+                    "function": {"name": "repair_spec"}
+                }
             )
             tool_calls = response.choices[0].message.tool_calls
             arguments = tool_calls[0].function.arguments
@@ -97,34 +119,56 @@ class SpecBot:
             repaired_segment = arguments.get("repaired_segment", None)
 
             if suggestion and fault_segment and repaired_segment:
-                is_repaired = repair_spec_impl(
-                    input_spec, fault_segment, repaired_segment, output_spec
+                is_repaired, repaired_spec_lines = repair_spec_impl(
+                    deepcopy(spec_lines), fault_segment, repaired_segment
                 )
         except Exception as e:
-            suggestion = str(e)
+            raise Exception(f'repair call ai server err, [{e}]')
 
-        patch = get_patch(input_spec, output_spec) if is_repaired else None
-        save_log(output_log, is_repaired, log, suggestion, fault_segment, patch)
+        if is_repaired:
+            patch = get_patch(spec_lines, repaired_spec_lines)
+        else:
+            patch = None
+        log_content = save_log(is_repaired,
+                               log,
+                               suggestion,
+                               fault_segment,
+                               patch)
 
-        return suggestion, is_repaired
+        repaired_spec_str = ''.join(repaired_spec_lines)
+        return suggestion, is_repaired, repaired_spec_str, log_content
 
-    def repair_pro(self, input_spec, input_log, input_doc, output_spec, output_log):
-        spec = self._preprocess_spec(input_spec)
-        log = self._preprocess_log(input_log)
-        doc = self._prepare_doc(input_doc)
+    def repair_pro(self, spec_lines, log_lines, doc_content=None):
+        '''
+        repair spec file content with doc
+
+        :param spec_lines: content of error spec file
+        :type list
+
+        :param log_lines: content of error log
+        :type list
+
+        :return
+        :type tuple(str, bool, list(str), str)
+
+        '''
+        spec = self._preprocess_spec(deepcopy(spec_lines))
+        log = self._preprocess_log(log_lines)
         tools = self._prepare_tools_pro()
         fault_segment = None
         repaired_segment = None
 
         is_repaired = False
         try:
-            messages = self._prepare_messages_pro_1(spec, log, doc)
+            messages = self._prepare_messages_pro_1(spec, log, doc_content)
             response = self.client.chat.completions.create(
-                model="claude-3-5-sonnet-20240620", messages=messages
+                model=settings.REPAIR_PRO_AI_MODEL, messages=messages
             )
             suggestion = response.choices[0].message.content
 
-            messages = self._prepare_messages_pro_2(spec, suggestion, doc)
+            messages = self._prepare_messages_pro_2(spec,
+                                                    suggestion,
+                                                    doc_content)
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -141,17 +185,26 @@ class SpecBot:
             repaired_segment = arguments.get("repaired_segment", None)
 
             if suggestion and fault_segment and repaired_segment:
-                is_repaired = repair_spec_impl(
-                    input_spec, fault_segment, repaired_segment, output_spec
+                is_repaired, repaired_spec_lines = repair_spec_impl(
+                    deepcopy(spec_lines), fault_segment, repaired_segment
                 )
 
         except Exception as e:
-            suggestion = str(e)
+            raise Exception(f'repair_pro call ai server err, [{e}]')
 
-        patch = get_patch(input_spec, output_spec) if is_repaired else None
-        save_log(output_log, is_repaired, log, suggestion, fault_segment, patch)
+        if is_repaired:
+            patch = get_patch(spec_lines, repaired_spec_lines)
+        else:
+            patch = None
 
-        return suggestion, is_repaired
+        log_content = save_log(is_repaired,
+                               log,
+                               suggestion,
+                               fault_segment,
+                               patch)
+
+        repaired_spec_str = ''.join(repaired_spec_lines)
+        return suggestion, is_repaired, repaired_spec_str, log_content
 
     def _prepare_messages(self, spec, log):
         # 准备消息
@@ -159,7 +212,10 @@ class SpecBot:
         if SYSTEM_PROMPT:
             messages.append({"role": "system", "content": SYSTEM_PROMPT})
         messages.append(
-            {"role": "user", "content": PROMPT_TEMPLATE.format(spec=spec, log=log)}
+            {
+                "role": "user",
+                "content": PROMPT_TEMPLATE.format(spec=spec, log=log)
+            }
         )
         return messages
 
@@ -170,7 +226,9 @@ class SpecBot:
         messages.append(
             {
                 "role": "user",
-                "content": PROMPT_TEMPLATE_PRO_1.format(spec=spec, log=log, doc=doc),
+                "content": PROMPT_TEMPLATE_PRO_1.format(spec=spec,
+                                                        log=log,
+                                                        doc=doc),
             }
         )
         return messages
@@ -180,7 +238,9 @@ class SpecBot:
         messages.append(
             {
                 "role": "user",
-                "content": PROMPT_TEMPLATE_PRO_2.format(spec=spec, info=info, doc=doc),
+                "content": PROMPT_TEMPLATE_PRO_2.format(spec=spec,
+                                                        info=info,
+                                                        doc=doc),
             }
         )
         return messages
@@ -193,17 +253,10 @@ class SpecBot:
         # 准备工具
         return [gen_func_description(repair_spec_pro)]
 
-    def _prepare_doc(self, doc_file):
-        if doc_file is None:
-            return None
-        with open(doc_file, "r", encoding="utf-8") as f:
-            doc = f.read()
-        return doc
-
-    def _preprocess_spec(self, spec_file):
-        # 预处理spec
-        with open(spec_file, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
+    def _preprocess_spec(self, lines: list):
+        '''
+        pre-process spec file content
+        '''
         index = 0
         for i in range(len(lines)):
             lines[i] = f"{index}: " + lines[i]
@@ -219,10 +272,10 @@ class SpecBot:
         spec = "".join(lines[start_index:])
         return spec
 
-    def _preprocess_log(self, log_file):
-        # 预处理log
-        with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
+    def _preprocess_log(self, lines: list):
+        '''
+        pre-process log file content
+        '''
         start_index = 0
         end_index = len(lines)
 

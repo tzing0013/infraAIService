@@ -16,3 +16,5 @@ httpx==0.23.0
 pydantic==1.10.12
 fastembed==0.3.6
 qdrant-client==1.11.1
+openai==1.43.1
+python-multipart

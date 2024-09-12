@@ -37,9 +37,10 @@ def gen_func_description(func) -> Dict:
             param_desc = args[1]
         else:
             # 处理非 Annotated 类型
-            param_type = (
-                hint.__name__.lower() if hasattr(hint, "__name__") else str(hint)
-            )
+            if hasattr(hint, "__name__"):
+                param_type = hint.__name__.lower()
+            else:
+                param_type = str(hint)
             param_desc = ""
 
         # 使用类型映射进行转换
@@ -92,14 +93,10 @@ def repair_spec_pro(
     return "spec 脚本修复"
 
 
-def repair_spec_impl(
-    original_spec_file: str,
-    fault_segment: str,
-    repaired_segment: str,
-    repaired_spec_file: str,
-) -> bool:
-    with open(original_spec_file, "r", encoding="utf-8", errors="ignore") as f:
-        spec_lines = f.readlines()
+def repair_spec_impl(spec_lines: list,
+                     fault_segment: str,
+                     repaired_segment: str):
+
     fault_lines = fault_segment.split("\n")
     fault_lines = [line + "\n" for line in fault_lines]
     repaired_lines = repaired_segment.split("\n")
@@ -136,7 +133,7 @@ def repair_spec_impl(
         delete_list.append((start_index, current_index + 1))
 
     if len(delete_list) == 0:
-        return False
+        return False, None
 
     # 修复片段提取
     insert_list = []
@@ -175,13 +172,13 @@ def repair_spec_impl(
         insert_line_list.append(line_list)
 
     # 按行号有大到小排序
-    delete_list_with_index = [(index, tup) for index, tup in enumerate(delete_list)]
+    delete_list_with_index = [(i, tup) for i, tup in enumerate(delete_list)]
     sorted_delete_list_with_index = sorted(
         delete_list_with_index, key=lambda x: x[1][0], reverse=True
     )
 
     if len(delete_list) != len(insert_list):
-        return False
+        return False, None
 
     # 按顺序替换
     for index, tup in sorted_delete_list_with_index:
@@ -189,42 +186,34 @@ def repair_spec_impl(
         del spec_lines[start_index:end_index]
         start_index, end_index = insert_list[index]
         spec_lines[start_index:start_index] = insert_line_list[index]
-    with open(repaired_spec_file, "w") as f:
-        f.write("".join(spec_lines))
-    return True
+
+    return True, spec_lines
 
 
-def get_patch(source, target):
-    with open(source, "r") as fs:
-        source_lines = fs.readlines()
-
-    with open(target, "r") as ft:
-        target_lines = ft.readlines()
-
+def get_patch(source_lines, target_lines):
     # 生成patch
     diff = difflib.unified_diff(
-        source_lines, target_lines, fromfile=source, tofile=target
+        source_lines, target_lines, fromfile='ERROR.spec', tofile='REPAIR.spec'
     )
-    patch = "".join(diff)
-    return patch
+    return ''.join(diff)
 
 
-def save_log(log_file, is_repaired, error_info, suggestion, fault_segment, patch):
-    repair_status = "Repaired" if is_repaired else "Not Repaired"
-    with open(log_file, "w") as f:
-        f.write("====================[Execution Log]====================\n\n")
-        f.write(f"Repair Status: [{repair_status}]\n\n")
+def save_log(is_repaired, error_info, suggestion, fault_segment, patch):
+    repair_status = 'Repaired' if is_repaired else 'Not Repaired'
 
-        f.write("--------------------[Error Message]--------------------\n\n")
-        f.write(f"{error_info}\n\n")
+    log = '====================[Execution Log]====================\n\n'
+    log += f'Repair Status: [{repair_status}]\n\n'
 
-        f.write("--------------------[AI Suggestion]--------------------\n\n")
-        f.write(f"{suggestion}\n\n")
+    log += '====================[Error Message]====================\n\n'
+    log += f'{error_info}\n\n'
 
-        f.write("--------------------[Fault Code]--------------------\n\n")
-        f.write(f"{fault_segment}\n\n")
+    log += '--------------------[AI Suggestion]--------------------\n\n'
+    log += f'{suggestion}\n\n'
 
-        f.write("--------------------[Patch Code]-----------------------\n\n")
-        f.write(f"{patch}\n\n")
+    log += '--------------------[Fault Code]--------------------\n\n'
+    log += f'{fault_segment}\n\n'
 
-        f.write("========================================================\n\n")
+    log += '--------------------[Patch Code]--------------------\n\n'
+    log += f'{patch}\n\n'
+
+    return log

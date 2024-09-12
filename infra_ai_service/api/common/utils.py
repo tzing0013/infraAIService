@@ -14,7 +14,7 @@ def setup_qdrant_environment():
     try:
         qdrant_client.get_collection(collection_name)
         print(f"Collection {collection_name} already exists")
-    except HTTPException as e:
+    except Exception as e:
         # 获取向量维度
         sample_embedding = next(fastembed_model.embed(["Sample text"]))
         vector_size = len(sample_embedding)
