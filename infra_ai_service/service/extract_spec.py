@@ -2,12 +2,15 @@
 
 import os
 import subprocess
-import json
+import copy
 import urllib.request
 import re
+import tempfile
 from infra_ai_service.config.config import settings
 from infra_ai_service.service.extract_xml import extract_xml_features
-from infra_ai_service.service.utils import update_json, write_json
+from infra_ai_service.service.utils import update_json
+
+XML_INFO = None
 
 
 def _download_from_url(url, rpm_path):
@@ -256,42 +259,57 @@ def _process_src_dir(src_path, data, count):
         _process_src_dir_common(cmd, data[count])
 
 
-def check_xml_info(force_refresh=False):
+def decompress_xml_file(feature_xml_path: str):
+    if feature_xml_path.endswith('.xml.zst'):
+        cmd = ['zstd', '-d', feature_xml_path]
+        dep_res = subprocess.run(cmd)
+
+    if feature_xml_path.endswith('.xml.gz'):
+        cmd = ['gzip', '-d', feature_xml_path]
+        dep_res = subprocess.run(cmd)
+
+    if dep_res.returncode != 0:
+        raise ValueError(f'delete redundant dir fail: {dep_res.stderr}')
+
+
+def check_xml_info(xml_url: str, os_version: str):
     '''
     :param force_refresh: refresh xml feature info from xml file
     :type bool
     '''
-    # TODO: may releate XML_EXTRACT_PATH to os_verson in API /feature-insert/
-    feature_xml_path = settings.XML_EXTRACT_PATH
-    cur_dir = os.path.dirname(feature_xml_path)
-    xml_info = None
+    with tempfile.TemporaryDirectory() as src_rpm_dir:
+        if xml_url.endswith('.xml.zst'):
+            base_name = f'{os_version}.xml.zst'
+        if xml_url.endswith('.xml.gz'):
+            base_name = f'{os_version}.xml.gz'
 
-    if not os.path.exists(feature_xml_path):
-        return None
+        feature_xml_path = os.path.join(src_rpm_dir, base_name)
+        _download_from_url(xml_url, feature_xml_path)
+        decompress_xml_file(feature_xml_path)
 
-    if not force_refresh:
-        # extract the info, save it to this path
-        feature_xml_json_path = os.path.join(cur_dir, 'xml_feature_info.json')
-        if os.path.exists(feature_xml_json_path):
-            with open(feature_xml_json_path, 'r', encoding='utf-8') as file:
-                content = file.read()
-                if content.strip():
-                    xml_info = json.loads(content)
+        feature_xml_path = feature_xml_path.replace('.zst', '')
+        feature_xml_path = feature_xml_path.replace('.gz', '')
 
-        if xml_info and xml_info != '':
-            return xml_info
+        if not os.path.exists(feature_xml_path):
+            raise Exception('download xml unknown error')
 
-    with open(feature_xml_path, 'r', encoding='utf-8') as file:
-        feature_xml = file.read()
-        xml_info = extract_xml_features(feature_xml)
+        xml_info = None
 
-    write_json(feature_xml_json_path, xml_info)
+        with open(feature_xml_path, 'r', encoding='utf-8') as file:
+            feature_xml = file.read()
+            xml_info = extract_xml_features(feature_xml)
 
-    return xml_info
+        xml_info.update({'os_version': os_version})
+
+        return xml_info
+
+    return None
 
 
-def extract_spec_features(dir_path: str, force_xml: bool):
-    xml_info = check_xml_info(force_xml)  # None, if not config xml path
+def extract_spec_features(dir_path: str):
+    if not XML_INFO:
+        raise Exception('need to config xml with API "/feature-insert/xml/"')
+
     data = {}
     count = 1
     count_flag = 0
@@ -308,6 +326,12 @@ def extract_spec_features(dir_path: str, force_xml: bool):
         if count_flag == 2:
             count += 1
             count_flag = 0
+
+    # os_version use only in API /feature-insert/
+    # XML_INFO cann't change
+    xml_info = copy.deepcopy(XML_INFO)
+    if xml_info.get('os_version', None):
+        del xml_info['os_version']
 
     data = update_json(xml_info, data)
 

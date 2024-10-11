@@ -3,7 +3,8 @@ import json
 import unittest
 import os
 import tempfile
-from unittest.mock import patch
+import urllib.request
+from unittest.mock import patch, MagicMock
 from httpx import AsyncClient
 from infra_ai_service.core.app import get_app
 from infra_ai_service.config.config import settings
@@ -13,8 +14,9 @@ from infra_ai_service.service.extract_spec import (
     _get_tar_cmd,
     _decompress_tar_file,
     _process_binarylist,
-    check_xml_info
+    check_xml_info,
 )
+import infra_ai_service.service.extract_spec as es
 
 app = get_app()
 
@@ -138,12 +140,25 @@ class TestFeatureInsert(unittest.TestCase):
         )
 
     def test_extract_spec_features(self):
+        es.XML_INFO = {
+            1: {
+                'description': 'Best practices checker for Ansible',
+                'name': 'ansible-lint',
+                'requires': []
+            },
+            3: {
+                'description': 'A dot-accessible dictionary',
+                'name': 'bunch',
+                'version': '1.0.1',
+                'url': 'http://github.com/dsc/bunch'
+            }
+        }
         with tempfile.TemporaryDirectory() as dir_path:
             spec_path = os.path.join(dir_path, 'bunch.spec')
             with open(spec_path, 'w', encoding='utf-8') as f:
                 f.write(self._create_spec_content())
 
-            data = extract_spec_features(dir_path, False)
+            data = extract_spec_features(dir_path)
             expected_data = {
                 1: {
                     'binaryList': [
@@ -156,13 +171,17 @@ class TestFeatureInsert(unittest.TestCase):
                         'python3-pip',
                         'python3-setuptools',
                         'python3-wheel'],
+                    'description': 'A dot-accessible dictionary',
                     'name': 'bunch',
                     'provides': [
                         'python-bunch',
                         'python3-bunch',
                         'python-bunch-help',
                         'python3-bunch-doc'],
-                    'source0': 'https://pythonhosted.org/bunch-1.0.1.zip'}
+                    'source0': 'https://pythonhosted.org/bunch-1.0.1.zip',
+                    'url': 'http://github.com/dsc/bunch',
+                    'version': '1.0.1'
+                }
             }
             self.assertEqual(data, expected_data)
 
@@ -239,39 +258,47 @@ class TestFeatureInsert(unittest.TestCase):
             '</metadata>\n'
         )
 
-    def test_check_xml_info(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_xml_path = os.path.join(tmp_dir, 'tmp.xml')
-            settings.XML_EXTRACT_PATH = tmp_xml_path
-            with open(tmp_xml_path, 'w') as f:
-                f.write(self._create_xml_content())
+    @patch('urllib.request.urlretrieve')
+    @patch('os.path.exists', return_value=True)
+    @patch('builtins.open', new_callable=MagicMock)
+    @patch('subprocess.run')
+    def test_extract_xml_features(self,
+                                  mock_run,
+                                  mock_open,
+                                  mock_exists,
+                                  mock_urlretrieve):
+        TEST_XML_URL = 'http://example.com/primary.xml.zst'
+        TEST_OS_VERSION = 'test_os_version'
+        mock_open.return_value.__enter__.return_value.read.return_value = \
+            self._create_xml_content()
+        mock_urlretrieve.return_value = ('download success', {})
+        mock_run.return_value = MagicMock(returncode=0, stdout=None, stderr=None)
 
-            try:
-                xml_info = check_xml_info()
-            except Exception as e:
-                raise Exception(f'test xml info error {e}')
+        result = check_xml_info(TEST_XML_URL, TEST_OS_VERSION)
 
-            xml_expected = {
-                1: {
-                    'description': 'Best practices checker for Ansible',
-                    'name': 'ansible-lint',
-                    'requires': [
-                        'ansible',
-                        'python(abi)',
-                        'python3-pyyaml',
-                        'python3-ruamel-yaml',
-                        'python3-setuptools_scm',
-                        'python3-six',
-                        'python3-typing-extensions',
-                        'python3.11dist(ansible)',
-                        'python3.11dist(pyyaml)',
-                        'python3.11dist(ruamel.yaml)',
-                        'python3.11dist(ruamel.yaml)',
-                        'python3.11dist(setuptools)',
-                        'python3.11dist(six)'],
-                    'summary': 'Best practices checker for Ansible',
-                    'url': 'https://github.com/ansible/ansible-lint',
-                    'version': '4.2'
-                }}
+        xml_expected = {
+            1: {
+                'description': 'Best practices checker for Ansible',
+                'name': 'ansible-lint',
+                'requires': [
+                    'ansible',
+                    'python(abi)',
+                    'python3-pyyaml',
+                    'python3-ruamel-yaml',
+                    'python3-setuptools_scm',
+                    'python3-six',
+                    'python3-typing-extensions',
+                    'python3.11dist(ansible)',
+                    'python3.11dist(pyyaml)',
+                    'python3.11dist(ruamel.yaml)',
+                    'python3.11dist(ruamel.yaml)',
+                    'python3.11dist(setuptools)',
+                    'python3.11dist(six)'],
+                'summary': 'Best practices checker for Ansible',
+                'url': 'https://github.com/ansible/ansible-lint',
+                'version': '4.2'
+            },
+            'os_version': 'test_os_version'
+        }
 
-            self.assertEqual(xml_info, xml_expected)
+        self.assertEqual(result, xml_expected)
